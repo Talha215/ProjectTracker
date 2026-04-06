@@ -146,7 +146,112 @@ function TaskRow({ task, onUpdate, onDelete, accentColor }) {
   );
 }
 
-function Tile({ project, onUpdate, onDelete }) {
+function ProjectDetail({ project, onUpdate, onDelete, onBack }) {
+  const [newTask, setNewTask] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [name, setName] = useState(project.name);
+
+  const total = project.tasks.length;
+  const done = project.tasks.filter(t => t.status === "Done").length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const overdue = project.tasks.filter(t => t.status !== "Done" && daysUntil(t.deadline) !== null && daysUntil(t.deadline) < 0).length;
+
+  const addTask = () => {
+    if (!newTask.trim()) return;
+    onUpdate({ ...project, tasks: [...project.tasks, { id: uid(), title: newTask.trim(), priority: "medium", status: "Not Started", deadline: "" }] });
+    setNewTask("");
+  };
+  const updateTask = (t) => onUpdate({ ...project, tasks: project.tasks.map(x => x.id === t.id ? t : x) });
+  const deleteTask = (tid) => onUpdate({ ...project, tasks: project.tasks.filter(x => x.id !== tid) });
+  const commitName = () => { if (name.trim()) onUpdate({ ...project, name: name.trim() }); setEditingName(false); };
+
+  return (
+    <div style={{ maxWidth: 720, margin: "0 auto" }}>
+      <button onClick={onBack} style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        background: "none", border: "1px solid var(--c-border)", borderRadius: 8,
+        color: "var(--c-muted)", fontSize: 12, cursor: "pointer",
+        padding: "5px 12px", marginBottom: 20, fontFamily: "inherit",
+        transition: "color .15s, border-color .15s",
+      }}
+        onMouseEnter={e => { e.currentTarget.style.color = "var(--c-text)"; e.currentTarget.style.borderColor = "var(--c-text)"; }}
+        onMouseLeave={e => { e.currentTarget.style.color = "var(--c-muted)"; e.currentTarget.style.borderColor = "var(--c-border)"; }}
+      >← Back to Projects</button>
+
+      <div style={{
+        background: "var(--c-surface)", borderRadius: 16,
+        border: "1px solid var(--c-border)", overflow: "hidden",
+      }}>
+        <div style={{ height: 5, background: `linear-gradient(90deg, ${project.color}, ${project.color}55)` }} />
+
+        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--c-border)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {editingName ? (
+              <input value={name} onChange={e => setName(e.target.value)}
+                onBlur={commitName} onKeyDown={e => e.key === "Enter" && commitName()} autoFocus
+                style={{ fontSize: 22, fontWeight: 700, background: "var(--c-bg)", border: "1px solid var(--c-border)", borderRadius: 8, padding: "3px 10px", color: "var(--c-text)", fontFamily: "inherit", width: "100%" }} />
+            ) : (
+              <h2 onClick={() => setEditingName(true)} style={{ margin: 0, fontSize: 22, fontWeight: 700, cursor: "text", color: "var(--c-text)" }}>{project.name}</h2>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+              <span style={{ fontSize: 12, color: "var(--c-muted)" }}>{done} of {total} done</span>
+              {pct > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: project.color }}>{pct}%</span>}
+              {overdue > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: "#FF6B6B" }}>⚠ {overdue} overdue</span>}
+            </div>
+            <div style={{ height: 4, background: "var(--c-border)", borderRadius: 2, marginTop: 10, maxWidth: 300 }}>
+              <div style={{ height: "100%", width: `${pct}%`, background: project.color, borderRadius: 2, transition: "width .3s" }} />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+            <button onClick={() => {
+              const next = TILE_COLORS[(TILE_COLORS.indexOf(project.color) + 1) % TILE_COLORS.length];
+              onUpdate({ ...project, color: next });
+            }} style={{
+              width: 22, height: 22, borderRadius: 99, background: project.color,
+              border: "2px solid var(--c-border)", cursor: "pointer",
+            }} title="Change color" />
+            <button onClick={() => { if (confirm("Delete this project?")) { onDelete(project.id); onBack(); } }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-muted)", fontSize: 16, padding: "0 2px", opacity: 0.5 }}
+              onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = "#FF6B6B"; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = 0.5; e.currentTarget.style.color = "var(--c-muted)"; }}>×</button>
+          </div>
+        </div>
+
+        <div style={{ padding: "12px 16px" }}>
+          {project.tasks.length === 0 && (
+            <p style={{ fontSize: 13, color: "var(--c-muted)", textAlign: "center", padding: "32px 0", margin: 0 }}>No tasks yet — add one below</p>
+          )}
+          {project.tasks.map(t => (
+            <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
+          ))}
+        </div>
+
+        <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--c-border)" }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input value={newTask} onChange={e => setNewTask(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addTask()}
+              placeholder="+ Add task"
+              style={{
+                flex: 1, fontSize: 13, padding: "8px 12px", borderRadius: 8,
+                border: "1px solid var(--c-border)", background: "var(--c-bg)",
+                color: "var(--c-text)", fontFamily: "inherit",
+              }} />
+            {newTask.trim() && (
+              <button onClick={addTask} style={{
+                padding: "8px 16px", borderRadius: 8, border: "none",
+                background: project.color, color: "#fff", fontSize: 13,
+                fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+              }}>Add</button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Tile({ project, onUpdate, onDelete, onFocus }) {
   const [newTask, setNewTask] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(project.name);
@@ -201,7 +306,13 @@ function Tile({ project, onUpdate, onDelete }) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 4, flexShrink: 0, marginTop: 2 }}>
+        <div style={{ display: "flex", gap: 4, flexShrink: 0, marginTop: 2, alignItems: "center" }}>
+          <button onClick={onFocus} style={{
+            background: "none", border: "none", cursor: "pointer", color: "var(--c-muted)",
+            fontSize: 13, padding: "0 2px", opacity: 0.5, lineHeight: 1,
+          }} title="Expand project"
+            onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = "var(--c-text)"; }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = 0.5; e.currentTarget.style.color = "var(--c-muted)"; }}>⤢</button>
           <button onClick={() => {
             const next = TILE_COLORS[(TILE_COLORS.indexOf(project.color) + 1) % TILE_COLORS.length];
             onUpdate({ ...project, color: next });
@@ -253,6 +364,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [view, setView] = useState("tiles");
+  const [focusedProjectId, setFocusedProjectId] = useState(null);
 
   useEffect(() => {
     const loaded = load();
@@ -335,17 +447,30 @@ export default function Dashboard() {
         </div>
       )}
 
-      {view === "tiles" && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-          gap: 14,
-        }}>
-          {filtered.map(p => (
-            <Tile key={p.id} project={p} onUpdate={updateProject} onDelete={deleteProject} />
-          ))}
-        </div>
-      )}
+      {view === "tiles" && (() => {
+        const focused = focusedProjectId && data.projects.find(p => p.id === focusedProjectId);
+        if (focused) {
+          return (
+            <ProjectDetail
+              project={focused}
+              onUpdate={updateProject}
+              onDelete={deleteProject}
+              onBack={() => setFocusedProjectId(null)}
+            />
+          );
+        }
+        return (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+            gap: 14,
+          }}>
+            {filtered.map(p => (
+              <Tile key={p.id} project={p} onUpdate={updateProject} onDelete={deleteProject} onFocus={() => setFocusedProjectId(p.id)} />
+            ))}
+          </div>
+        );
+      })()}
 
       {view === "deadlines" && (
         <div style={{ maxWidth: 720 }}>
