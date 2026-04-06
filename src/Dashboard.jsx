@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
 
 const PRIORITY_COLORS = {
   high: { bg: "#FF6B6B20", border: "#FF6B6B", text: "#FF6B6B", label: "High" },
@@ -68,6 +69,145 @@ const DEFAULTS = {
     { id: uid(), name: "CSLSI", color: "#5B8DEF", tasks: [] },
   ],
 };
+
+// ── CSV helpers ────────────────────────────────────────────────────────────
+function parseCsv(text) {
+  const rows = []; let cols = []; let cur = ''; let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') { inQ = !inQ; }
+    else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+    else if ((ch === '\n' || ch === '\r') && !inQ) {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      cols.push(cur.trim()); cur = '';
+      if (cols.some(c => c)) rows.push(cols);
+      cols = [];
+    } else { cur += ch; }
+  }
+  if (cur || cols.length) { cols.push(cur.trim()); if (cols.some(c => c)) rows.push(cols); }
+  return rows;
+}
+
+function parseDate(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m4 = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m4) return `${m4[3]}-${m4[1].padStart(2, '0')}-${m4[2].padStart(2, '0')}`;
+  const m2 = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2})(?!\d)/);
+  if (m2) { const yr = parseInt(m2[3]) > 50 ? '19' + m2[3] : '20' + m2[3]; return `${yr}-${m2[1].padStart(2, '0')}-${m2[2].padStart(2, '0')}`; }
+  try { const d = new Date(raw); if (!isNaN(d)) return d.toISOString().slice(0, 10); } catch {}
+  return '';
+}
+
+function smartsheetToTasks(rows) {
+  if (rows.length < 2) return null;
+  const headers = rows[0].map(h => String(h ?? '').toLowerCase().replace(/[^a-z0-9 #]/g, '').trim());
+  const col = (...names) => { for (const n of names) { const i = headers.findIndex(h => h === n || h.includes(n)); if (i >= 0) return i; } return -1; };
+
+  const titleCol = col('task name', 'name', 'row name', 'summary', 'title', 'item');
+  if (titleCol < 0) return null;
+  const statusCol = col('status');
+  const priorityCol = col('priority');
+  const dateCol = col('completion date', 'due date', 'deadline', 'end date', 'finish');
+  const programCol = col('program');
+  const ticketCol = col('ticket');
+
+  const tasks = rows.slice(1).map(r => {
+    const get = (i) => (i >= 0 && i < r.length ? String(r[i] ?? '').trim() : '');
+    const rawTitle = get(titleCol); if (!rawTitle) return null;
+    const rawStatus = get(statusCol).toLowerCase();
+    const rawPriority = get(priorityCol).toLowerCase();
+    const ticket = get(ticketCol);
+    const program = get(programCol);
+
+    let status = 'Not Started';
+    if (/complete|done|finish|verified|closed/.test(rawStatus)) status = 'Done';
+    else if (/progress|start|active|ongoing/.test(rawStatus)) status = 'In Progress';
+    else if (/block|hold|stuck|waiting/.test(rawStatus)) status = 'Blocked';
+    // "to-do", "to do", "not started", etc. → stays Not Started
+
+    let priority = 'medium';
+    if (/high|critical|urgent/.test(rawPriority)) priority = 'high';
+    else if (/low/.test(rawPriority)) priority = 'low';
+
+    const deadline = parseDate(get(dateCol));
+    const title = ticket ? `[#${ticket}] ${rawTitle}` : rawTitle;
+
+    return { id: uid(), title, status, priority, deadline, _program: program || null };
+  }).filter(Boolean);
+
+  const hasProgram = programCol >= 0 && tasks.some(t => t._program);
+  return { tasks, hasProgram };
+}
+
+function ImportModal({ parsed, projects, onImport, onClose }) {
+  const [targetId, setTargetId] = useState(parsed.hasProgram ? '__program__' : '__new__');
+  const active = parsed.tasks.filter(t => t.status !== 'Done').length;
+  const done = parsed.tasks.length - active;
+
+  // Group by program for preview
+  const programGroups = {};
+  if (parsed.hasProgram) {
+    parsed.tasks.forEach(t => {
+      const p = t._program || 'Uncategorized';
+      programGroups[p] = (programGroups[p] || 0) + 1;
+    });
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: '#000000aa', zIndex: 100,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        background: 'var(--c-surface)', borderRadius: 16, border: '1px solid var(--c-border)',
+        padding: '24px', width: 440, maxWidth: '90vw',
+      }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>Import from SmartSheet</h3>
+        <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--c-muted)' }}>
+          <strong style={{ color: 'var(--c-text)' }}>{parsed.tasks.length} tasks</strong> found in <em>{parsed.fileName}</em>
+          {done > 0 && <> &nbsp;·&nbsp; {active} active, {done} completed</>}
+        </p>
+
+        {parsed.hasProgram && (
+          <div style={{ marginBottom: 16, padding: '10px 12px', background: 'var(--c-bg)', borderRadius: 8, border: '1px solid var(--c-border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--c-muted)', marginBottom: 6, fontWeight: 600 }}>Programs detected</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {Object.entries(programGroups).map(([name, count]) => (
+                <span key={name} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'var(--c-surface)', border: '1px solid var(--c-border)', color: 'var(--c-text)' }}>
+                  {name} <span style={{ color: 'var(--c-muted)' }}>({count})</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <label style={{ fontSize: 12, color: 'var(--c-muted)', display: 'block', marginBottom: 6 }}>Import into</label>
+        <select value={targetId} onChange={e => setTargetId(e.target.value)} style={{
+          width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13,
+          background: 'var(--c-bg)', border: '1px solid var(--c-border)',
+          color: 'var(--c-text)', fontFamily: 'inherit', marginBottom: 20,
+        }}>
+          {parsed.hasProgram && <option value="__program__">Auto-sort by Program column</option>}
+          <option value="__new__">New project: "{parsed.projectName}"</option>
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{
+            padding: '8px 16px', borderRadius: 8, border: '1px solid var(--c-border)',
+            background: 'none', color: 'var(--c-muted)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+          }}>Cancel</button>
+          <button onClick={() => onImport(targetId, parsed)} style={{
+            padding: '8px 18px', borderRadius: 8, border: 'none',
+            background: '#5B8DEF', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          }}>Import {parsed.tasks.length} tasks</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function TaskRow({ task, onUpdate, onDelete, accentColor }) {
   const [editing, setEditing] = useState(false);
@@ -150,6 +290,7 @@ function ProjectDetail({ project, onUpdate, onDelete, onBack }) {
   const [newTask, setNewTask] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(project.name);
+  const [showCompleted, setShowCompleted] = useState(false);
 
   const total = project.tasks.length;
   const done = project.tasks.filter(t => t.status === "Done").length;
@@ -222,9 +363,24 @@ function ProjectDetail({ project, onUpdate, onDelete, onBack }) {
           {project.tasks.length === 0 && (
             <p style={{ fontSize: 13, color: "var(--c-muted)", textAlign: "center", padding: "32px 0", margin: 0 }}>No tasks yet — add one below</p>
           )}
-          {project.tasks.map(t => (
+          {project.tasks.filter(t => t.status !== "Done").map(t => (
             <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
           ))}
+          {project.tasks.filter(t => t.status === "Done").length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <button onClick={() => setShowCompleted(v => !v)} style={{
+                background: "none", border: "none", cursor: "pointer", padding: "4px 0",
+                fontSize: 12, color: "var(--c-muted)", fontFamily: "inherit",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+                <span style={{ fontSize: 10 }}>{showCompleted ? "▾" : "▸"}</span>
+                Completed ({project.tasks.filter(t => t.status === "Done").length})
+              </button>
+              {showCompleted && project.tasks.filter(t => t.status === "Done").map(t => (
+                <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--c-border)" }}>
@@ -328,11 +484,14 @@ function Tile({ project, onUpdate, onDelete, onFocus }) {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 10px", minHeight: 0 }}>
-        {project.tasks.map(t => (
+        {project.tasks.filter(t => t.status !== "Done").map(t => (
           <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
         ))}
         {total === 0 && (
           <p style={{ fontSize: 12, color: "var(--c-muted)", textAlign: "center", padding: "20px 0", margin: 0, opacity: 0.6 }}>No tasks yet</p>
+        )}
+        {total > 0 && done > 0 && project.tasks.filter(t => t.status !== "Done").length === 0 && (
+          <p style={{ fontSize: 12, color: "var(--c-muted)", textAlign: "center", padding: "20px 0", margin: 0, opacity: 0.6 }}>All tasks done ✓</p>
         )}
       </div>
 
@@ -365,6 +524,8 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [view, setView] = useState("tiles");
   const [focusedProjectId, setFocusedProjectId] = useState(null);
+  const [importModal, setImportModal] = useState(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     const loaded = load();
@@ -380,6 +541,56 @@ export default function Dashboard() {
   };
   const updateProject = (p) => persist({ ...data, projects: data.projects.map(x => x.id === p.id ? p : x) });
   const deleteProject = (pid) => persist({ ...data, projects: data.projects.filter(x => x.id !== pid) });
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    const isXls = /\.xlsx?$/i.test(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      let rows;
+      if (isXls) {
+        const wb = XLSX.read(ev.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+      } else {
+        rows = parseCsv(ev.target.result);
+      }
+      const result = smartsheetToTasks(rows);
+      if (!result || result.tasks.length === 0) { alert('No tasks found. Make sure the file has a column named "Task Name", "Name", or "Title".'); return; }
+      const projectName = file.name.replace(/\.(csv|xlsx?)$/i, '');
+      setImportModal({ ...result, fileName: file.name, projectName });
+    };
+    if (isXls) reader.readAsArrayBuffer(file); else reader.readAsText(file);
+  };
+
+  const handleImport = (targetId, parsed) => {
+    const cleanTasks = (tasks) => tasks.map(({ _program, ...t }) => t);
+    let newData;
+    if (targetId === '__program__') {
+      // Auto-sort by Program column — match existing projects by name (case-insensitive), create new for unmatched
+      const groups = {};
+      parsed.tasks.forEach(t => { const p = t._program || 'Uncategorized'; (groups[p] = groups[p] || []).push(t); });
+      let projects = [...data.projects];
+      for (const [progName, tasks] of Object.entries(groups)) {
+        const existing = projects.find(p => p.name.toLowerCase() === progName.toLowerCase());
+        if (existing) {
+          projects = projects.map(p => p.id === existing.id ? { ...p, tasks: [...p.tasks, ...cleanTasks(tasks)] } : p);
+        } else {
+          projects.push({ id: uid(), name: progName, color: TILE_COLORS[projects.length % TILE_COLORS.length], tasks: cleanTasks(tasks) });
+        }
+      }
+      newData = { ...data, projects };
+    } else if (targetId === '__new__') {
+      const color = TILE_COLORS[data.projects.length % TILE_COLORS.length];
+      newData = { ...data, projects: [...data.projects, { id: uid(), name: parsed.projectName, color, tasks: cleanTasks(parsed.tasks) }] };
+    } else {
+      newData = { ...data, projects: data.projects.map(p => p.id === targetId ? { ...p, tasks: [...p.tasks, ...cleanTasks(parsed.tasks)] } : p) };
+    }
+    persist(newData);
+    setImportModal(null);
+  };
 
   if (loading) return <div style={{ padding: 60, textAlign: "center", color: "#6B7280", fontFamily: "system-ui" }}>Loading...</div>;
 
@@ -424,6 +635,11 @@ export default function Dashboard() {
             background: view === "deadlines" ? "var(--c-row)" : "var(--c-surface)",
             color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
           }}>{view === "tiles" ? "⏰ Deadlines" : "◻ Tiles"}</button>
+          <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} style={{ display: "none" }} />
+          <button onClick={() => fileInputRef.current.click()} style={{
+            padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)",
+            background: "var(--c-surface)", color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+          }}>↑ Import CSV</button>
           <button onClick={addProject} style={{
             padding: "6px 14px", borderRadius: 8, border: "none",
             background: "#5B8DEF", color: "#fff", fontSize: 12, fontWeight: 600,
@@ -431,6 +647,8 @@ export default function Dashboard() {
           }}>+ Project</button>
         </div>
       </div>
+
+      {importModal && <ImportModal parsed={importModal} projects={data.projects} onImport={handleImport} onClose={() => setImportModal(null)} />}
 
       {(overdueTasks.length > 0 || upcoming7.length > 0) && (
         <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
