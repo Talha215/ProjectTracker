@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 const PRIORITY_COLORS = {
   high: { bg: "#FF6B6B20", border: "#FF6B6B", text: "#FF6B6B", label: "High" },
@@ -68,6 +68,101 @@ const DEFAULTS = {
     { id: uid(), name: "CSLSI", color: "#5B8DEF", tasks: [] },
   ],
 };
+
+// ── CSV helpers ────────────────────────────────────────────────────────────
+function parseCsv(text) {
+  const rows = []; let cols = []; let cur = ''; let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') { inQ = !inQ; }
+    else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+    else if ((ch === '\n' || ch === '\r') && !inQ) {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      cols.push(cur.trim()); cur = '';
+      if (cols.some(c => c)) rows.push(cols);
+      cols = [];
+    } else { cur += ch; }
+  }
+  if (cur || cols.length) { cols.push(cur.trim()); if (cols.some(c => c)) rows.push(cols); }
+  return rows;
+}
+
+function smartsheetToTasks(rows) {
+  if (rows.length < 2) return null;
+  const headers = rows[0].map(h => h.toLowerCase().replace(/[^a-z ]/g, '').trim());
+  const col = (...names) => { for (const n of names) { const i = headers.indexOf(n); if (i >= 0) return i; } return -1; };
+  const titleCol = col('task name', 'name', 'row name', 'summary', 'title', 'item', 'task');
+  if (titleCol < 0) return null;
+  const statusCol = col('status', 'task status', 'state');
+  const priorityCol = col('priority');
+  const dateCol = col('due date', 'deadline', 'end date', 'finish date', 'due');
+
+  return rows.slice(1).map(r => {
+    const get = (i) => (i >= 0 && i < r.length ? r[i] : '');
+    const title = get(titleCol); if (!title) return null;
+    const raw = { status: get(statusCol).toLowerCase(), priority: get(priorityCol).toLowerCase(), date: get(dateCol) };
+
+    let status = 'Not Started';
+    if (/complete|done|finish/.test(raw.status)) status = 'Done';
+    else if (/progress|start|active|ongoing/.test(raw.status)) status = 'In Progress';
+    else if (/block|hold|stuck/.test(raw.status)) status = 'Blocked';
+
+    let priority = 'medium';
+    if (/high|critical|urgent/.test(raw.priority)) priority = 'high';
+    else if (/low/.test(raw.priority)) priority = 'low';
+
+    let deadline = '';
+    const mdy = raw.date.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (mdy) deadline = `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(raw.date)) deadline = raw.date;
+
+    return { id: uid(), title, status, priority, deadline };
+  }).filter(Boolean);
+}
+
+function ImportModal({ parsed, projects, onImport, onClose }) {
+  const [targetId, setTargetId] = useState('__new__');
+  const active = parsed.tasks.filter(t => t.status !== 'Done').length;
+  const done = parsed.tasks.length - active;
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: '#000000aa', zIndex: 100,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        background: 'var(--c-surface)', borderRadius: 16, border: '1px solid var(--c-border)',
+        padding: '24px', width: 420, maxWidth: '90vw',
+      }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>Import from SmartSheet</h3>
+        <p style={{ margin: '0 0 18px', fontSize: 12, color: 'var(--c-muted)' }}>
+          <strong style={{ color: 'var(--c-text)' }}>{parsed.tasks.length} tasks</strong> found in <em>{parsed.fileName}</em>
+          {done > 0 && <> &nbsp;·&nbsp; {active} active, {done} already done</>}
+        </p>
+
+        <label style={{ fontSize: 12, color: 'var(--c-muted)', display: 'block', marginBottom: 6 }}>Import into</label>
+        <select value={targetId} onChange={e => setTargetId(e.target.value)} style={{
+          width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13,
+          background: 'var(--c-bg)', border: '1px solid var(--c-border)',
+          color: 'var(--c-text)', fontFamily: 'inherit', marginBottom: 20,
+        }}>
+          <option value="__new__">New project: "{parsed.projectName}"</option>
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{
+            padding: '8px 16px', borderRadius: 8, border: '1px solid var(--c-border)',
+            background: 'none', color: 'var(--c-muted)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+          }}>Cancel</button>
+          <button onClick={() => onImport(targetId, parsed)} style={{
+            padding: '8px 18px', borderRadius: 8, border: 'none',
+            background: '#5B8DEF', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          }}>Import {parsed.tasks.length} tasks</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function TaskRow({ task, onUpdate, onDelete, accentColor }) {
   const [editing, setEditing] = useState(false);
@@ -150,6 +245,7 @@ function ProjectDetail({ project, onUpdate, onDelete, onBack }) {
   const [newTask, setNewTask] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(project.name);
+  const [showCompleted, setShowCompleted] = useState(false);
 
   const total = project.tasks.length;
   const done = project.tasks.filter(t => t.status === "Done").length;
@@ -222,9 +318,24 @@ function ProjectDetail({ project, onUpdate, onDelete, onBack }) {
           {project.tasks.length === 0 && (
             <p style={{ fontSize: 13, color: "var(--c-muted)", textAlign: "center", padding: "32px 0", margin: 0 }}>No tasks yet — add one below</p>
           )}
-          {project.tasks.map(t => (
+          {project.tasks.filter(t => t.status !== "Done").map(t => (
             <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
           ))}
+          {project.tasks.filter(t => t.status === "Done").length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <button onClick={() => setShowCompleted(v => !v)} style={{
+                background: "none", border: "none", cursor: "pointer", padding: "4px 0",
+                fontSize: 12, color: "var(--c-muted)", fontFamily: "inherit",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+                <span style={{ fontSize: 10 }}>{showCompleted ? "▾" : "▸"}</span>
+                Completed ({project.tasks.filter(t => t.status === "Done").length})
+              </button>
+              {showCompleted && project.tasks.filter(t => t.status === "Done").map(t => (
+                <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--c-border)" }}>
@@ -328,11 +439,14 @@ function Tile({ project, onUpdate, onDelete, onFocus }) {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 10px", minHeight: 0 }}>
-        {project.tasks.map(t => (
+        {project.tasks.filter(t => t.status !== "Done").map(t => (
           <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
         ))}
         {total === 0 && (
           <p style={{ fontSize: 12, color: "var(--c-muted)", textAlign: "center", padding: "20px 0", margin: 0, opacity: 0.6 }}>No tasks yet</p>
+        )}
+        {total > 0 && done > 0 && project.tasks.filter(t => t.status !== "Done").length === 0 && (
+          <p style={{ fontSize: 12, color: "var(--c-muted)", textAlign: "center", padding: "20px 0", margin: 0, opacity: 0.6 }}>All tasks done ✓</p>
         )}
       </div>
 
@@ -365,6 +479,8 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [view, setView] = useState("tiles");
   const [focusedProjectId, setFocusedProjectId] = useState(null);
+  const [importModal, setImportModal] = useState(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     const loaded = load();
@@ -380,6 +496,33 @@ export default function Dashboard() {
   };
   const updateProject = (p) => persist({ ...data, projects: data.projects.map(x => x.id === p.id ? p : x) });
   const deleteProject = (pid) => persist({ ...data, projects: data.projects.filter(x => x.id !== pid) });
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const rows = parseCsv(ev.target.result);
+      const tasks = smartsheetToTasks(rows);
+      if (!tasks || tasks.length === 0) { alert('No tasks found. Make sure the CSV has a column named "Task Name", "Name", or "Title".'); return; }
+      const projectName = file.name.replace(/\.csv$/i, '');
+      setImportModal({ tasks, fileName: file.name, projectName });
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImport = (targetId, parsed) => {
+    let newData;
+    if (targetId === '__new__') {
+      const color = TILE_COLORS[data.projects.length % TILE_COLORS.length];
+      newData = { ...data, projects: [...data.projects, { id: uid(), name: parsed.projectName, color, tasks: parsed.tasks }] };
+    } else {
+      newData = { ...data, projects: data.projects.map(p => p.id === targetId ? { ...p, tasks: [...p.tasks, ...parsed.tasks] } : p) };
+    }
+    persist(newData);
+    setImportModal(null);
+  };
 
   if (loading) return <div style={{ padding: 60, textAlign: "center", color: "#6B7280", fontFamily: "system-ui" }}>Loading...</div>;
 
@@ -424,6 +567,11 @@ export default function Dashboard() {
             background: view === "deadlines" ? "var(--c-row)" : "var(--c-surface)",
             color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
           }}>{view === "tiles" ? "⏰ Deadlines" : "◻ Tiles"}</button>
+          <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileChange} style={{ display: "none" }} />
+          <button onClick={() => fileInputRef.current.click()} style={{
+            padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)",
+            background: "var(--c-surface)", color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+          }}>↑ Import CSV</button>
           <button onClick={addProject} style={{
             padding: "6px 14px", borderRadius: 8, border: "none",
             background: "#5B8DEF", color: "#fff", fontSize: 12, fontWeight: 600,
@@ -431,6 +579,8 @@ export default function Dashboard() {
           }}>+ Project</button>
         </div>
       </div>
+
+      {importModal && <ImportModal parsed={importModal} projects={data.projects} onImport={handleImport} onClose={() => setImportModal(null)} />}
 
       {(overdueTasks.length > 0 || upcoming7.length > 0) && (
         <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
