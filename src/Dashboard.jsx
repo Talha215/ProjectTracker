@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
 
 const PRIORITY_COLORS = {
   high: { bg: "#FF6B6B20", border: "#FF6B6B", text: "#FF6B6B", label: "High" },
@@ -87,43 +88,73 @@ function parseCsv(text) {
   return rows;
 }
 
+function parseDate(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m4 = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m4) return `${m4[3]}-${m4[1].padStart(2, '0')}-${m4[2].padStart(2, '0')}`;
+  const m2 = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2})(?!\d)/);
+  if (m2) { const yr = parseInt(m2[3]) > 50 ? '19' + m2[3] : '20' + m2[3]; return `${yr}-${m2[1].padStart(2, '0')}-${m2[2].padStart(2, '0')}`; }
+  try { const d = new Date(raw); if (!isNaN(d)) return d.toISOString().slice(0, 10); } catch {}
+  return '';
+}
+
 function smartsheetToTasks(rows) {
   if (rows.length < 2) return null;
-  const headers = rows[0].map(h => h.toLowerCase().replace(/[^a-z ]/g, '').trim());
-  const col = (...names) => { for (const n of names) { const i = headers.indexOf(n); if (i >= 0) return i; } return -1; };
-  const titleCol = col('task name', 'name', 'row name', 'summary', 'title', 'item', 'task');
-  if (titleCol < 0) return null;
-  const statusCol = col('status', 'task status', 'state');
-  const priorityCol = col('priority');
-  const dateCol = col('due date', 'deadline', 'end date', 'finish date', 'due');
+  const headers = rows[0].map(h => String(h ?? '').toLowerCase().replace(/[^a-z0-9 #]/g, '').trim());
+  const col = (...names) => { for (const n of names) { const i = headers.findIndex(h => h === n || h.includes(n)); if (i >= 0) return i; } return -1; };
 
-  return rows.slice(1).map(r => {
-    const get = (i) => (i >= 0 && i < r.length ? r[i] : '');
-    const title = get(titleCol); if (!title) return null;
-    const raw = { status: get(statusCol).toLowerCase(), priority: get(priorityCol).toLowerCase(), date: get(dateCol) };
+  const titleCol = col('task name', 'name', 'row name', 'summary', 'title', 'item');
+  if (titleCol < 0) return null;
+  const statusCol = col('status');
+  const priorityCol = col('priority');
+  const dateCol = col('completion date', 'due date', 'deadline', 'end date', 'finish');
+  const programCol = col('program');
+  const ticketCol = col('ticket');
+
+  const tasks = rows.slice(1).map(r => {
+    const get = (i) => (i >= 0 && i < r.length ? String(r[i] ?? '').trim() : '');
+    const rawTitle = get(titleCol); if (!rawTitle) return null;
+    const rawStatus = get(statusCol).toLowerCase();
+    const rawPriority = get(priorityCol).toLowerCase();
+    const ticket = get(ticketCol);
+    const program = get(programCol);
 
     let status = 'Not Started';
-    if (/complete|done|finish/.test(raw.status)) status = 'Done';
-    else if (/progress|start|active|ongoing/.test(raw.status)) status = 'In Progress';
-    else if (/block|hold|stuck/.test(raw.status)) status = 'Blocked';
+    if (/complete|done|finish|verified|closed/.test(rawStatus)) status = 'Done';
+    else if (/progress|start|active|ongoing/.test(rawStatus)) status = 'In Progress';
+    else if (/block|hold|stuck|waiting/.test(rawStatus)) status = 'Blocked';
+    // "to-do", "to do", "not started", etc. → stays Not Started
 
     let priority = 'medium';
-    if (/high|critical|urgent/.test(raw.priority)) priority = 'high';
-    else if (/low/.test(raw.priority)) priority = 'low';
+    if (/high|critical|urgent/.test(rawPriority)) priority = 'high';
+    else if (/low/.test(rawPriority)) priority = 'low';
 
-    let deadline = '';
-    const mdy = raw.date.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (mdy) deadline = `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
-    else if (/^\d{4}-\d{2}-\d{2}$/.test(raw.date)) deadline = raw.date;
+    const deadline = parseDate(get(dateCol));
+    const title = ticket ? `[#${ticket}] ${rawTitle}` : rawTitle;
 
-    return { id: uid(), title, status, priority, deadline };
+    return { id: uid(), title, status, priority, deadline, _program: program || null };
   }).filter(Boolean);
+
+  const hasProgram = programCol >= 0 && tasks.some(t => t._program);
+  return { tasks, hasProgram };
 }
 
 function ImportModal({ parsed, projects, onImport, onClose }) {
-  const [targetId, setTargetId] = useState('__new__');
+  const [targetId, setTargetId] = useState(parsed.hasProgram ? '__program__' : '__new__');
   const active = parsed.tasks.filter(t => t.status !== 'Done').length;
   const done = parsed.tasks.length - active;
+
+  // Group by program for preview
+  const programGroups = {};
+  if (parsed.hasProgram) {
+    parsed.tasks.forEach(t => {
+      const p = t._program || 'Uncategorized';
+      programGroups[p] = (programGroups[p] || 0) + 1;
+    });
+  }
+
   return (
     <div style={{
       position: 'fixed', inset: 0, background: '#000000aa', zIndex: 100,
@@ -131,13 +162,26 @@ function ImportModal({ parsed, projects, onImport, onClose }) {
     }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{
         background: 'var(--c-surface)', borderRadius: 16, border: '1px solid var(--c-border)',
-        padding: '24px', width: 420, maxWidth: '90vw',
+        padding: '24px', width: 440, maxWidth: '90vw',
       }}>
         <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>Import from SmartSheet</h3>
-        <p style={{ margin: '0 0 18px', fontSize: 12, color: 'var(--c-muted)' }}>
+        <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--c-muted)' }}>
           <strong style={{ color: 'var(--c-text)' }}>{parsed.tasks.length} tasks</strong> found in <em>{parsed.fileName}</em>
-          {done > 0 && <> &nbsp;·&nbsp; {active} active, {done} already done</>}
+          {done > 0 && <> &nbsp;·&nbsp; {active} active, {done} completed</>}
         </p>
+
+        {parsed.hasProgram && (
+          <div style={{ marginBottom: 16, padding: '10px 12px', background: 'var(--c-bg)', borderRadius: 8, border: '1px solid var(--c-border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--c-muted)', marginBottom: 6, fontWeight: 600 }}>Programs detected</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {Object.entries(programGroups).map(([name, count]) => (
+                <span key={name} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'var(--c-surface)', border: '1px solid var(--c-border)', color: 'var(--c-text)' }}>
+                  {name} <span style={{ color: 'var(--c-muted)' }}>({count})</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <label style={{ fontSize: 12, color: 'var(--c-muted)', display: 'block', marginBottom: 6 }}>Import into</label>
         <select value={targetId} onChange={e => setTargetId(e.target.value)} style={{
@@ -145,6 +189,7 @@ function ImportModal({ parsed, projects, onImport, onClose }) {
           background: 'var(--c-bg)', border: '1px solid var(--c-border)',
           color: 'var(--c-text)', fontFamily: 'inherit', marginBottom: 20,
         }}>
+          {parsed.hasProgram && <option value="__program__">Auto-sort by Program column</option>}
           <option value="__new__">New project: "{parsed.projectName}"</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
@@ -501,24 +546,47 @@ export default function Dashboard() {
     const file = e.target.files[0];
     if (!file) return;
     e.target.value = '';
+    const isXls = /\.xlsx?$/i.test(file.name);
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const rows = parseCsv(ev.target.result);
-      const tasks = smartsheetToTasks(rows);
-      if (!tasks || tasks.length === 0) { alert('No tasks found. Make sure the CSV has a column named "Task Name", "Name", or "Title".'); return; }
-      const projectName = file.name.replace(/\.csv$/i, '');
-      setImportModal({ tasks, fileName: file.name, projectName });
+      let rows;
+      if (isXls) {
+        const wb = XLSX.read(ev.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+      } else {
+        rows = parseCsv(ev.target.result);
+      }
+      const result = smartsheetToTasks(rows);
+      if (!result || result.tasks.length === 0) { alert('No tasks found. Make sure the file has a column named "Task Name", "Name", or "Title".'); return; }
+      const projectName = file.name.replace(/\.(csv|xlsx?)$/i, '');
+      setImportModal({ ...result, fileName: file.name, projectName });
     };
-    reader.readAsText(file);
+    if (isXls) reader.readAsArrayBuffer(file); else reader.readAsText(file);
   };
 
   const handleImport = (targetId, parsed) => {
+    const cleanTasks = (tasks) => tasks.map(({ _program, ...t }) => t);
     let newData;
-    if (targetId === '__new__') {
+    if (targetId === '__program__') {
+      // Auto-sort by Program column — match existing projects by name (case-insensitive), create new for unmatched
+      const groups = {};
+      parsed.tasks.forEach(t => { const p = t._program || 'Uncategorized'; (groups[p] = groups[p] || []).push(t); });
+      let projects = [...data.projects];
+      for (const [progName, tasks] of Object.entries(groups)) {
+        const existing = projects.find(p => p.name.toLowerCase() === progName.toLowerCase());
+        if (existing) {
+          projects = projects.map(p => p.id === existing.id ? { ...p, tasks: [...p.tasks, ...cleanTasks(tasks)] } : p);
+        } else {
+          projects.push({ id: uid(), name: progName, color: TILE_COLORS[projects.length % TILE_COLORS.length], tasks: cleanTasks(tasks) });
+        }
+      }
+      newData = { ...data, projects };
+    } else if (targetId === '__new__') {
       const color = TILE_COLORS[data.projects.length % TILE_COLORS.length];
-      newData = { ...data, projects: [...data.projects, { id: uid(), name: parsed.projectName, color, tasks: parsed.tasks }] };
+      newData = { ...data, projects: [...data.projects, { id: uid(), name: parsed.projectName, color, tasks: cleanTasks(parsed.tasks) }] };
     } else {
-      newData = { ...data, projects: data.projects.map(p => p.id === targetId ? { ...p, tasks: [...p.tasks, ...parsed.tasks] } : p) };
+      newData = { ...data, projects: data.projects.map(p => p.id === targetId ? { ...p, tasks: [...p.tasks, ...cleanTasks(parsed.tasks)] } : p) };
     }
     persist(newData);
     setImportModal(null);
@@ -567,7 +635,7 @@ export default function Dashboard() {
             background: view === "deadlines" ? "var(--c-row)" : "var(--c-surface)",
             color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
           }}>{view === "tiles" ? "⏰ Deadlines" : "◻ Tiles"}</button>
-          <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileChange} style={{ display: "none" }} />
+          <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} style={{ display: "none" }} />
           <button onClick={() => fileInputRef.current.click()} style={{
             padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)",
             background: "var(--c-surface)", color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
