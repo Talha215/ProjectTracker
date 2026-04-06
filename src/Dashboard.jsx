@@ -209,102 +209,90 @@ function ImportModal({ parsed, projects, onImport, onClose }) {
   );
 }
 
-function TaskRow({ task, onUpdate, onDelete, accentColor }) {
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(task.title);
+// ── Flags (Today's Focus) — stored separately so they survive Clear All ──────
+const FLAGS_KEY = "pm-dashboard-flags";
+function loadFlags() { try { return new Set(JSON.parse(localStorage.getItem(FLAGS_KEY) || "[]")); } catch { return new Set(); } }
+function saveFlags(s) { try { localStorage.setItem(FLAGS_KEY, JSON.stringify([...s])); } catch {} }
+
+function TaskRow({ task, accentColor, flagged, onToggleFlag }) {
   const pri = PRIORITY_COLORS[task.priority];
   const dl = dlInfo(task.deadline);
   const isDone = task.status === "Done";
-
-  const commit = () => { if (title.trim()) onUpdate({ ...task, title: title.trim() }); setEditing(false); };
 
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 7,
       padding: "5px 8px", borderRadius: 6, marginBottom: 3,
-      background: isDone ? "transparent" : "var(--c-row)",
-      opacity: isDone ? 0.45 : 1, transition: "all .15s",
+      background: isDone ? "transparent" : flagged ? "#F0A84010" : "var(--c-row)",
+      opacity: isDone ? 0.5 : 1, transition: "background .15s",
+      border: flagged && !isDone ? "1px solid #F0A84033" : "1px solid transparent",
     }}>
-      <button onClick={() => onUpdate({ ...task, status: isDone ? "In Progress" : "Done" })} style={{
-        width: 16, height: 16, borderRadius: 4, flexShrink: 0, cursor: "pointer",
-        border: `1.5px solid ${isDone ? STATUS_COLORS.Done : accentColor + "88"}`,
-        background: isDone ? STATUS_COLORS.Done : "transparent",
-        color: "#fff", fontSize: 10, lineHeight: 1,
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>{isDone ? "✓" : ""}</button>
+      <button onClick={() => onToggleFlag(task.id)} title={flagged ? "Remove from focus" : "Add to today's focus"} style={{
+        background: "none", border: "none", cursor: "pointer", padding: 0,
+        fontSize: 13, lineHeight: 1, flexShrink: 0,
+        color: flagged ? "#F0A840" : "var(--c-muted)", opacity: flagged ? 1 : 0.35,
+        transition: "all .15s",
+      }}>★</button>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {editing ? (
-          <input value={title} onChange={e => setTitle(e.target.value)}
-            onBlur={commit} onKeyDown={e => e.key === "Enter" && commit()} autoFocus
-            style={{ width: "100%", background: "var(--c-bg)", border: "1px solid var(--c-border)", borderRadius: 4, padding: "2px 6px", color: "var(--c-text)", fontSize: 12, fontFamily: "inherit" }} />
-        ) : (
-          <span onClick={() => setEditing(true)} style={{
-            fontSize: 12, color: "var(--c-text)", cursor: "text",
-            textDecoration: isDone ? "line-through" : "none",
-            display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}>{task.title}</span>
-        )}
-      </div>
+      <span style={{
+        flex: 1, fontSize: 12, color: "var(--c-text)",
+        textDecoration: isDone ? "line-through" : "none",
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      }}>{task.title}</span>
 
-      <button onClick={() => {
-        const k = ["low", "medium", "high"];
-        onUpdate({ ...task, priority: k[(k.indexOf(task.priority) + 1) % 3] });
-      }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: pri.text, letterSpacing: 0.3 }}>{pri.label.toUpperCase()}</span>
-      </button>
+      {pri && <span style={{ fontSize: 9, fontWeight: 700, color: pri.text, letterSpacing: 0.3, flexShrink: 0 }}>{pri.label.toUpperCase()}</span>}
 
-      <button onClick={() => {
-        const next = STATUS_OPTIONS[(STATUS_OPTIONS.indexOf(task.status) + 1) % STATUS_OPTIONS.length];
-        onUpdate({ ...task, status: next });
-      }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-        <span style={{
-          display: "inline-block", width: 7, height: 7, borderRadius: 99,
-          background: STATUS_COLORS[task.status],
-        }} title={task.status} />
-      </button>
+      <span style={{
+        display: "inline-block", width: 7, height: 7, borderRadius: 99, flexShrink: 0,
+        background: STATUS_COLORS[task.status],
+      }} title={task.status} />
 
-      <div style={{ position: "relative", flexShrink: 0, width: 50, textAlign: "right" }}>
-        {dl ? (
-          <span style={{ fontSize: 10, fontWeight: 600, color: dl.color }}>{dl.label}</span>
-        ) : (
-          <input type="date" value="" onChange={e => onUpdate({ ...task, deadline: e.target.value })}
-            style={{ width: 20, opacity: 0.3, background: "none", border: "none", cursor: "pointer", fontSize: 10 }} title="Set deadline" />
-        )}
-        {task.deadline && (
-          <input type="date" value={task.deadline} onChange={e => onUpdate({ ...task, deadline: e.target.value })}
-            style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
-        )}
-      </div>
-
-      <button onClick={() => onDelete(task.id)} style={{
-        background: "none", border: "none", cursor: "pointer", color: "var(--c-muted)",
-        fontSize: 13, padding: "0 2px", lineHeight: 1, opacity: 0.4,
-      }} onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = "#FF6B6B"; }}
-         onMouseLeave={e => { e.currentTarget.style.opacity = 0.4; e.currentTarget.style.color = "var(--c-muted)"; }}>×</button>
+      {dl && <span style={{ fontSize: 10, fontWeight: 600, color: dl.color, flexShrink: 0, minWidth: 46, textAlign: "right" }}>{dl.label}</span>}
     </div>
   );
 }
 
-function ProjectDetail({ project, onUpdate, onDelete, onBack }) {
-  const [newTask, setNewTask] = useState("");
-  const [editingName, setEditingName] = useState(false);
-  const [name, setName] = useState(project.name);
+function FocusPanel({ flaggedIds, projects, onToggleFlag }) {
+  const flaggedTasks = projects.flatMap(p =>
+    p.tasks.filter(t => flaggedIds.has(t.id)).map(t => ({ ...t, pName: p.name, pColor: p.color }))
+  );
+  if (flaggedTasks.length === 0) return null;
+  return (
+    <div style={{
+      marginBottom: 20, borderRadius: 12, overflow: "hidden",
+      border: "1px solid #F0A84033", background: "var(--c-surface)",
+    }}>
+      <div style={{ padding: "10px 16px", borderBottom: "1px solid #F0A84022", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#F0A840", letterSpacing: 0.8 }}>TODAY'S FOCUS</span>
+        <span style={{ fontSize: 11, color: "#F0A840", opacity: 0.7 }}>{flaggedTasks.length} item{flaggedTasks.length !== 1 ? "s" : ""}</span>
+      </div>
+      {flaggedTasks.map(t => {
+        const dl = dlInfo(t.deadline);
+        return (
+          <div key={t.id} style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 16px", borderBottom: "1px solid var(--c-border)",
+          }}>
+            <button onClick={() => onToggleFlag(t.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#F0A840", padding: 0, flexShrink: 0 }}>★</button>
+            <div style={{ width: 8, height: 8, borderRadius: 99, background: t.pColor, flexShrink: 0 }} />
+            <span style={{ flex: 1, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</span>
+            <span style={{ fontSize: 11, color: "var(--c-muted)", flexShrink: 0 }}>{t.pName}</span>
+            {PRIORITY_COLORS[t.priority] && <span style={{ fontSize: 9, fontWeight: 700, color: PRIORITY_COLORS[t.priority].text, flexShrink: 0 }}>{PRIORITY_COLORS[t.priority].label.toUpperCase()}</span>}
+            {dl && <span style={{ fontSize: 11, fontWeight: 600, color: dl.color, flexShrink: 0 }}>{dl.label}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProjectDetail({ project, flagged, onToggleFlag, onBack }) {
   const [showCompleted, setShowCompleted] = useState(false);
-
+  const activeTasks = project.tasks.filter(t => t.status !== "Done");
+  const doneTasks = project.tasks.filter(t => t.status === "Done");
   const total = project.tasks.length;
-  const done = project.tasks.filter(t => t.status === "Done").length;
-  const pct = total ? Math.round((done / total) * 100) : 0;
-  const overdue = project.tasks.filter(t => t.status !== "Done" && daysUntil(t.deadline) !== null && daysUntil(t.deadline) < 0).length;
-
-  const addTask = () => {
-    if (!newTask.trim()) return;
-    onUpdate({ ...project, tasks: [...project.tasks, { id: uid(), title: newTask.trim(), priority: "medium", status: "Not Started", deadline: "" }] });
-    setNewTask("");
-  };
-  const updateTask = (t) => onUpdate({ ...project, tasks: project.tasks.map(x => x.id === t.id ? t : x) });
-  const deleteTask = (tid) => onUpdate({ ...project, tasks: project.tasks.filter(x => x.id !== tid) });
-  const commitName = () => { if (name.trim()) onUpdate({ ...project, name: name.trim() }); setEditingName(false); };
+  const pct = total ? Math.round((doneTasks.length / total) * 100) : 0;
+  const overdue = activeTasks.filter(t => daysUntil(t.deadline) !== null && daysUntil(t.deadline) < 0).length;
 
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
@@ -313,206 +301,102 @@ function ProjectDetail({ project, onUpdate, onDelete, onBack }) {
         background: "none", border: "1px solid var(--c-border)", borderRadius: 8,
         color: "var(--c-muted)", fontSize: 12, cursor: "pointer",
         padding: "5px 12px", marginBottom: 20, fontFamily: "inherit",
-        transition: "color .15s, border-color .15s",
       }}
         onMouseEnter={e => { e.currentTarget.style.color = "var(--c-text)"; e.currentTarget.style.borderColor = "var(--c-text)"; }}
         onMouseLeave={e => { e.currentTarget.style.color = "var(--c-muted)"; e.currentTarget.style.borderColor = "var(--c-border)"; }}
       >← Back to Projects</button>
 
-      <div style={{
-        background: "var(--c-surface)", borderRadius: 16,
-        border: "1px solid var(--c-border)", overflow: "hidden",
-      }}>
+      <div style={{ background: "var(--c-surface)", borderRadius: 16, border: "1px solid var(--c-border)", overflow: "hidden" }}>
         <div style={{ height: 5, background: `linear-gradient(90deg, ${project.color}, ${project.color}55)` }} />
 
-        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--c-border)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {editingName ? (
-              <input value={name} onChange={e => setName(e.target.value)}
-                onBlur={commitName} onKeyDown={e => e.key === "Enter" && commitName()} autoFocus
-                style={{ fontSize: 22, fontWeight: 700, background: "var(--c-bg)", border: "1px solid var(--c-border)", borderRadius: 8, padding: "3px 10px", color: "var(--c-text)", fontFamily: "inherit", width: "100%" }} />
-            ) : (
-              <h2 onClick={() => setEditingName(true)} style={{ margin: 0, fontSize: 22, fontWeight: 700, cursor: "text", color: "var(--c-text)" }}>{project.name}</h2>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-              <span style={{ fontSize: 12, color: "var(--c-muted)" }}>{done} of {total} done</span>
-              {pct > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: project.color }}>{pct}%</span>}
-              {overdue > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: "#FF6B6B" }}>⚠ {overdue} overdue</span>}
-            </div>
-            <div style={{ height: 4, background: "var(--c-border)", borderRadius: 2, marginTop: 10, maxWidth: 300 }}>
-              <div style={{ height: "100%", width: `${pct}%`, background: project.color, borderRadius: 2, transition: "width .3s" }} />
-            </div>
+        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--c-border)" }}>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "var(--c-text)" }}>{project.name}</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+            <span style={{ fontSize: 12, color: "var(--c-muted)" }}>{doneTasks.length} of {total} done</span>
+            {pct > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: project.color }}>{pct}%</span>}
+            {overdue > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: "#FF6B6B" }}>⚠ {overdue} overdue</span>}
           </div>
-
-          <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
-            <button onClick={() => {
-              const next = TILE_COLORS[(TILE_COLORS.indexOf(project.color) + 1) % TILE_COLORS.length];
-              onUpdate({ ...project, color: next });
-            }} style={{
-              width: 22, height: 22, borderRadius: 99, background: project.color,
-              border: "2px solid var(--c-border)", cursor: "pointer",
-            }} title="Change color" />
-            <button onClick={() => { if (confirm("Delete this project?")) { onDelete(project.id); onBack(); } }}
-              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-muted)", fontSize: 16, padding: "0 2px", opacity: 0.5 }}
-              onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = "#FF6B6B"; }}
-              onMouseLeave={e => { e.currentTarget.style.opacity = 0.5; e.currentTarget.style.color = "var(--c-muted)"; }}>×</button>
+          <div style={{ height: 4, background: "var(--c-border)", borderRadius: 2, marginTop: 10, maxWidth: 300 }}>
+            <div style={{ height: "100%", width: `${pct}%`, background: project.color, borderRadius: 2, transition: "width .3s" }} />
           </div>
         </div>
 
         <div style={{ padding: "12px 16px" }}>
-          {project.tasks.length === 0 && (
-            <p style={{ fontSize: 13, color: "var(--c-muted)", textAlign: "center", padding: "32px 0", margin: 0 }}>No tasks yet — add one below</p>
+          {activeTasks.length === 0 && doneTasks.length === 0 && (
+            <p style={{ fontSize: 13, color: "var(--c-muted)", textAlign: "center", padding: "32px 0", margin: 0 }}>No tasks</p>
           )}
-          {project.tasks.filter(t => t.status !== "Done").map(t => (
-            <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
+          {activeTasks.length === 0 && doneTasks.length > 0 && (
+            <p style={{ fontSize: 13, color: project.color, textAlign: "center", padding: "24px 0 12px", margin: 0, fontWeight: 600 }}>All tasks completed ✓</p>
+          )}
+          {activeTasks.map(t => (
+            <TaskRow key={t.id} task={t} accentColor={project.color} flagged={flagged.has(t.id)} onToggleFlag={onToggleFlag} />
           ))}
-          {project.tasks.filter(t => t.status === "Done").length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <button onClick={() => setShowCompleted(v => !v)} style={{
-                background: "none", border: "none", cursor: "pointer", padding: "4px 0",
-                fontSize: 12, color: "var(--c-muted)", fontFamily: "inherit",
-                display: "flex", alignItems: "center", gap: 6,
-              }}>
-                <span style={{ fontSize: 10 }}>{showCompleted ? "▾" : "▸"}</span>
-                Completed ({project.tasks.filter(t => t.status === "Done").length})
-              </button>
-              {showCompleted && project.tasks.filter(t => t.status === "Done").map(t => (
-                <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
-              ))}
-            </div>
-          )}
         </div>
 
-        <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--c-border)" }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input value={newTask} onChange={e => setNewTask(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && addTask()}
-              placeholder="+ Add task"
-              style={{
-                flex: 1, fontSize: 13, padding: "8px 12px", borderRadius: 8,
-                border: "1px solid var(--c-border)", background: "var(--c-bg)",
-                color: "var(--c-text)", fontFamily: "inherit",
-              }} />
-            {newTask.trim() && (
-              <button onClick={addTask} style={{
-                padding: "8px 16px", borderRadius: 8, border: "none",
-                background: project.color, color: "#fff", fontSize: 13,
-                fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-              }}>Add</button>
+        {doneTasks.length > 0 && (
+          <div style={{ borderTop: "1px solid var(--c-border)" }}>
+            <button onClick={() => setShowCompleted(v => !v)} style={{
+              width: "100%", padding: "10px 16px", background: "none", border: "none",
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+              color: "var(--c-muted)", fontSize: 12, fontFamily: "inherit",
+            }}>
+              <span style={{ fontSize: 10, transition: "transform .15s", transform: showCompleted ? "rotate(90deg)" : "none", display: "inline-block" }}>▶</span>
+              Completed ({doneTasks.length})
+            </button>
+            {showCompleted && (
+              <div style={{ padding: "4px 16px 12px" }}>
+                {doneTasks.map(t => (
+                  <TaskRow key={t.id} task={t} accentColor={project.color} flagged={flagged.has(t.id)} onToggleFlag={onToggleFlag} />
+                ))}
+              </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-function Tile({ project, onUpdate, onDelete, onFocus }) {
-  const [newTask, setNewTask] = useState("");
-  const [editingName, setEditingName] = useState(false);
-  const [name, setName] = useState(project.name);
-
+function Tile({ project, flagged, onToggleFlag, onFocus }) {
+  const activeTasks = project.tasks.filter(t => t.status !== "Done");
   const total = project.tasks.length;
-  const done = project.tasks.filter(t => t.status === "Done").length;
+  const done = total - activeTasks.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
-  const overdue = project.tasks.filter(t => t.status !== "Done" && daysUntil(t.deadline) !== null && daysUntil(t.deadline) < 0).length;
-
-  const addTask = () => {
-    if (!newTask.trim()) return;
-    onUpdate({ ...project, tasks: [...project.tasks, { id: uid(), title: newTask.trim(), priority: "medium", status: "Not Started", deadline: "" }] });
-    setNewTask("");
-  };
-  const updateTask = (t) => onUpdate({ ...project, tasks: project.tasks.map(x => x.id === t.id ? t : x) });
-  const deleteTask = (tid) => onUpdate({ ...project, tasks: project.tasks.filter(x => x.id !== tid) });
-  const commitName = () => { if (name.trim()) onUpdate({ ...project, name: name.trim() }); setEditingName(false); };
+  const overdue = activeTasks.filter(t => daysUntil(t.deadline) !== null && daysUntil(t.deadline) < 0).length;
 
   return (
     <div style={{
-      background: "var(--c-surface)",
-      borderRadius: 16,
-      border: "1px solid var(--c-border)",
-      display: "flex", flexDirection: "column",
-      aspectRatio: "1 / 1",
-      position: "relative",
-      overflow: "hidden",
+      background: "var(--c-surface)", borderRadius: 16,
+      border: "1px solid var(--c-border)", display: "flex", flexDirection: "column",
+      aspectRatio: "1 / 1", overflow: "hidden",
     }}>
       <div style={{ height: 4, background: `linear-gradient(90deg, ${project.color}, ${project.color}66)`, flexShrink: 0 }} />
 
-      <div style={{ padding: "14px 16px 8px", flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {editingName ? (
-            <input value={name} onChange={e => setName(e.target.value)}
-              onBlur={commitName} onKeyDown={e => e.key === "Enter" && commitName()} autoFocus
-              style={{ width: "100%", fontSize: 15, fontWeight: 700, background: "var(--c-bg)", border: "1px solid var(--c-border)", borderRadius: 6, padding: "2px 8px", color: "var(--c-text)", fontFamily: "inherit" }} />
-          ) : (
-            <h2 onClick={() => setEditingName(true)} style={{
-              margin: 0, fontSize: 15, fontWeight: 700, cursor: "text",
-              color: "var(--c-text)", lineHeight: 1.3,
-            }}>{project.name}</h2>
-          )}
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-            <span style={{ fontSize: 11, color: "var(--c-muted)" }}>{done}/{total}</span>
-            {pct > 0 && <span style={{ fontSize: 11, color: project.color, fontWeight: 600 }}>{pct}%</span>}
-            {overdue > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: "#FF6B6B" }}>⚠ {overdue}</span>}
-          </div>
-
-          <div style={{ height: 3, background: "var(--c-border)", borderRadius: 2, marginTop: 6 }}>
-            <div style={{ height: "100%", width: `${pct}%`, background: project.color, borderRadius: 2, transition: "width .3s" }} />
-          </div>
+      <div onClick={onFocus} style={{ padding: "14px 16px 8px", flexShrink: 0, cursor: "pointer" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "var(--c-text)", lineHeight: 1.3, flex: 1, minWidth: 0 }}>{project.name}</h2>
+          <span style={{ fontSize: 11, color: "var(--c-muted)", opacity: 0.5, flexShrink: 0, marginTop: 2 }}>⤢</span>
         </div>
-
-        <div style={{ display: "flex", gap: 4, flexShrink: 0, marginTop: 2, alignItems: "center" }}>
-          <button onClick={onFocus} style={{
-            background: "none", border: "none", cursor: "pointer", color: "var(--c-muted)",
-            fontSize: 13, padding: "0 2px", opacity: 0.5, lineHeight: 1,
-          }} title="Expand project"
-            onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = "var(--c-text)"; }}
-            onMouseLeave={e => { e.currentTarget.style.opacity = 0.5; e.currentTarget.style.color = "var(--c-muted)"; }}>⤢</button>
-          <button onClick={() => {
-            const next = TILE_COLORS[(TILE_COLORS.indexOf(project.color) + 1) % TILE_COLORS.length];
-            onUpdate({ ...project, color: next });
-          }} style={{
-            width: 18, height: 18, borderRadius: 99, background: project.color,
-            border: "2px solid var(--c-border)", cursor: "pointer",
-          }} title="Change color" />
-          <button onClick={() => { if (confirm("Delete this project?")) onDelete(project.id); }}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-muted)", fontSize: 14, padding: "0 2px", opacity: 0.5 }}
-            onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = "#FF6B6B"; }}
-            onMouseLeave={e => { e.currentTarget.style.opacity = 0.5; e.currentTarget.style.color = "var(--c-muted)"; }}>×</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+          <span style={{ fontSize: 11, color: "var(--c-muted)" }}>{done}/{total}</span>
+          {pct > 0 && <span style={{ fontSize: 11, color: project.color, fontWeight: 600 }}>{pct}%</span>}
+          {overdue > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: "#FF6B6B" }}>⚠ {overdue}</span>}
+        </div>
+        <div style={{ height: 3, background: "var(--c-border)", borderRadius: 2, marginTop: 6 }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: project.color, borderRadius: 2, transition: "width .3s" }} />
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 10px", minHeight: 0 }}>
-        {project.tasks.filter(t => t.status !== "Done").map(t => (
-          <TaskRow key={t.id} task={t} onUpdate={updateTask} onDelete={deleteTask} accentColor={project.color} />
+        {activeTasks.length === 0 && done === 0 && (
+          <p style={{ fontSize: 12, color: "var(--c-muted)", textAlign: "center", padding: "20px 0", margin: 0, opacity: 0.6 }}>No tasks</p>
+        )}
+        {activeTasks.length === 0 && done > 0 && (
+          <p style={{ fontSize: 12, color: project.color, textAlign: "center", padding: "20px 0", margin: 0, fontWeight: 600 }}>All done ✓</p>
+        )}
+        {activeTasks.map(t => (
+          <TaskRow key={t.id} task={t} accentColor={project.color} flagged={flagged.has(t.id)} onToggleFlag={onToggleFlag} />
         ))}
-        {total === 0 && (
-          <p style={{ fontSize: 12, color: "var(--c-muted)", textAlign: "center", padding: "20px 0", margin: 0, opacity: 0.6 }}>No tasks yet</p>
-        )}
-        {total > 0 && done > 0 && project.tasks.filter(t => t.status !== "Done").length === 0 && (
-          <p style={{ fontSize: 12, color: "var(--c-muted)", textAlign: "center", padding: "20px 0", margin: 0, opacity: 0.6 }}>All tasks done ✓</p>
-        )}
-      </div>
-
-      <div style={{ padding: "8px 10px 12px", borderTop: "1px solid var(--c-border)", flexShrink: 0 }}>
-        <div style={{ display: "flex", gap: 4 }}>
-          <input value={newTask} onChange={e => setNewTask(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && addTask()}
-            placeholder="+ Add task"
-            style={{
-              flex: 1, fontSize: 12, padding: "6px 10px", borderRadius: 6,
-              border: "1px solid var(--c-border)", background: "var(--c-bg)",
-              color: "var(--c-text)", fontFamily: "inherit",
-            }} />
-          {newTask.trim() && (
-            <button onClick={addTask} style={{
-              padding: "6px 12px", borderRadius: 6, border: "none",
-              background: project.color, color: "#fff", fontSize: 12,
-              fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-            }}>Add</button>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -525,22 +409,27 @@ export default function Dashboard() {
   const [view, setView] = useState("tiles");
   const [focusedProjectId, setFocusedProjectId] = useState(null);
   const [importModal, setImportModal] = useState(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [flagged, setFlagged] = useState(() => loadFlags());
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     const loaded = load();
-    setData(loaded || DEFAULTS);
+    setData(loaded || { projects: [] });
     setLoading(false);
   }, []);
 
-  const persist = useCallback((d) => { setData(d); save(d); }, []);
-  const addProject = () => {
-    persist({ ...data, projects: [...data.projects, {
-      id: uid(), name: "New Project", color: TILE_COLORS[data.projects.length % TILE_COLORS.length], tasks: [],
-    }] });
+  const toggleFlag = (taskId) => {
+    setFlagged(prev => {
+      const next = new Set(prev);
+      next.has(taskId) ? next.delete(taskId) : next.add(taskId);
+      saveFlags(next);
+      return next;
+    });
   };
+
+  const persist = useCallback((d) => { setData(d); save(d); }, []);
   const updateProject = (p) => persist({ ...data, projects: data.projects.map(x => x.id === p.id ? p : x) });
-  const deleteProject = (pid) => persist({ ...data, projects: data.projects.filter(x => x.id !== pid) });
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -599,102 +488,108 @@ export default function Dashboard() {
   const doneTasks = allTasks.filter(t => t.status === "Done").length;
   const overdueTasks = allTasks.filter(t => t.status !== "Done" && daysUntil(t.deadline) !== null && daysUntil(t.deadline) < 0);
   const upcoming7 = allTasks.filter(t => t.status !== "Done" && daysUntil(t.deadline) !== null && daysUntil(t.deadline) >= 0 && daysUntil(t.deadline) <= 7);
-
   const filtered = search
     ? data.projects.map(p => ({ ...p, tasks: p.tasks.filter(t => t.title.toLowerCase().includes(search.toLowerCase())) }))
         .filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.tasks.length > 0)
     : data.projects;
-
   const deadlineTasks = allTasks.filter(t => t.status !== "Done" && t.deadline).sort((a, b) => a.deadline.localeCompare(b.deadline));
 
   return (
     <div style={{
-      "--c-bg": "#0D0F14",
-      "--c-surface": "#161921",
-      "--c-row": "#1C1F2A",
-      "--c-border": "#252A37",
-      "--c-text": "#E2E5ED",
-      "--c-muted": "#6B7280",
+      "--c-bg": "#0D0F14", "--c-surface": "#161921", "--c-row": "#1C1F2A",
+      "--c-border": "#252A37", "--c-text": "#E2E5ED", "--c-muted": "#6B7280",
       fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif",
-      background: "var(--c-bg)", color: "var(--c-text)",
-      minHeight: "100vh", padding: "20px 24px",
+      background: "var(--c-bg)", color: "var(--c-text)", minHeight: "100vh", padding: "20px 24px",
     }}>
+
+      {/* ── Toolbar ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: -0.5 }}>Projects</h1>
-          <span style={{ fontSize: 12, color: "var(--c-muted)" }}>
-            {doneTasks}/{totalTasks} tasks done
-          </span>
+          {totalTasks > 0 && <span style={{ fontSize: 12, color: "var(--c-muted)" }}>{doneTasks}/{totalTasks} done</span>}
         </div>
-
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..."
-            style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)", background: "var(--c-surface)", color: "var(--c-text)", width: 140, fontFamily: "inherit" }} />
-          <button onClick={() => setView(view === "tiles" ? "deadlines" : "tiles")} style={{
-            padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)",
-            background: view === "deadlines" ? "var(--c-row)" : "var(--c-surface)",
-            color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
-          }}>{view === "tiles" ? "⏰ Deadlines" : "◻ Tiles"}</button>
+          {data.projects.length > 0 && (
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..."
+              style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)", background: "var(--c-surface)", color: "var(--c-text)", width: 140, fontFamily: "inherit" }} />
+          )}
+          {data.projects.length > 0 && (
+            <button onClick={() => setView(view === "tiles" ? "deadlines" : "tiles")} style={{
+              padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)",
+              background: view === "deadlines" ? "var(--c-row)" : "var(--c-surface)",
+              color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+            }}>{view === "tiles" ? "⏰ Deadlines" : "◻ Tiles"}</button>
+          )}
+          {data.projects.length > 0 && (
+            <button onClick={() => setShowClearConfirm(true)} style={{
+              padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)",
+              background: "none", color: "var(--c-muted)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+            }}>Clear All</button>
+          )}
           <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} style={{ display: "none" }} />
           <button onClick={() => fileInputRef.current.click()} style={{
-            padding: "6px 12px", borderRadius: 8, border: "1px solid var(--c-border)",
-            background: "var(--c-surface)", color: "var(--c-text)", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
-          }}>↑ Import CSV</button>
-          <button onClick={addProject} style={{
             padding: "6px 14px", borderRadius: 8, border: "none",
-            background: "#5B8DEF", color: "#fff", fontSize: 12, fontWeight: 600,
-            cursor: "pointer", fontFamily: "inherit",
-          }}>+ Project</button>
+            background: "#5B8DEF", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+          }}>↑ Import</button>
         </div>
       </div>
 
+      {/* ── Modals ── */}
       {importModal && <ImportModal parsed={importModal} projects={data.projects} onImport={handleImport} onClose={() => setImportModal(null)} />}
-
-      {(overdueTasks.length > 0 || upcoming7.length > 0) && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-          {overdueTasks.length > 0 && (
-            <div style={{ padding: "5px 12px", borderRadius: 6, background: "#FF6B6B14", border: "1px solid #FF6B6B33", fontSize: 11, color: "#FF6B6B", fontWeight: 600 }}>
-              {overdueTasks.length} overdue
+      {showClearConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "#000000aa", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={e => e.target === e.currentTarget && setShowClearConfirm(false)}>
+          <div style={{ background: "var(--c-surface)", borderRadius: 16, border: "1px solid var(--c-border)", padding: "24px", width: 360, maxWidth: "90vw" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 700 }}>Clear all data?</h3>
+            <p style={{ fontSize: 13, color: "var(--c-muted)", margin: "0 0 20px" }}>All projects and tasks will be removed. Import a fresh SmartSheet file to reload.</p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowClearConfirm(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--c-border)", background: "none", color: "var(--c-muted)", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button onClick={() => { persist({ projects: [] }); setShowClearConfirm(false); setFocusedProjectId(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#FF6B6B", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Clear All</button>
             </div>
-          )}
-          {upcoming7.length > 0 && (
-            <div style={{ padding: "5px 12px", borderRadius: 6, background: "#F0A84014", border: "1px solid #F0A84033", fontSize: 11, color: "#F0A840", fontWeight: 600 }}>
-              {upcoming7.length} due this week
-            </div>
-          )}
+          </div>
         </div>
       )}
 
-      {view === "tiles" && (() => {
+      {/* ── Status pills ── */}
+      {(overdueTasks.length > 0 || upcoming7.length > 0) && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+          {overdueTasks.length > 0 && <div style={{ padding: "5px 12px", borderRadius: 6, background: "#FF6B6B14", border: "1px solid #FF6B6B33", fontSize: 11, color: "#FF6B6B", fontWeight: 600 }}>{overdueTasks.length} overdue</div>}
+          {upcoming7.length > 0 && <div style={{ padding: "5px 12px", borderRadius: 6, background: "#F0A84014", border: "1px solid #F0A84033", fontSize: 11, color: "#F0A840", fontWeight: 600 }}>{upcoming7.length} due this week</div>}
+        </div>
+      )}
+
+      {/* ── Today's Focus panel ── */}
+      <FocusPanel flaggedIds={flagged} projects={data.projects} onToggleFlag={toggleFlag} />
+
+      {/* ── Empty state ── */}
+      {data.projects.length === 0 && (
+        <div style={{ textAlign: "center", padding: "100px 0", color: "var(--c-muted)" }}>
+          <div style={{ fontSize: 36, marginBottom: 16, opacity: 0.4 }}>📊</div>
+          <p style={{ fontSize: 15, margin: "0 0 6px", color: "var(--c-text)" }}>No data yet</p>
+          <p style={{ fontSize: 12, margin: "0 0 24px" }}>Import your SmartSheet file to get started</p>
+          <button onClick={() => fileInputRef.current.click()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#5B8DEF", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>↑ Import SmartSheet</button>
+        </div>
+      )}
+
+      {/* ── Tiles view ── */}
+      {view === "tiles" && data.projects.length > 0 && (() => {
         const focused = focusedProjectId && data.projects.find(p => p.id === focusedProjectId);
-        if (focused) {
-          return (
-            <ProjectDetail
-              project={focused}
-              onUpdate={updateProject}
-              onDelete={deleteProject}
-              onBack={() => setFocusedProjectId(null)}
-            />
-          );
-        }
+        if (focused) return (
+          <ProjectDetail project={focused} flagged={flagged} onToggleFlag={toggleFlag} onBack={() => setFocusedProjectId(null)} />
+        );
         return (
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-            gap: 14,
-          }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
             {filtered.map(p => (
-              <Tile key={p.id} project={p} onUpdate={updateProject} onDelete={deleteProject} onFocus={() => setFocusedProjectId(p.id)} />
+              <Tile key={p.id} project={p} flagged={flagged} onToggleFlag={toggleFlag} onFocus={() => setFocusedProjectId(p.id)} />
             ))}
           </div>
         );
       })()}
 
-      {view === "deadlines" && (
+      {/* ── Deadlines view ── */}
+      {view === "deadlines" && data.projects.length > 0 && (
         <div style={{ maxWidth: 720 }}>
-          {deadlineTasks.length === 0 && (
-            <p style={{ color: "var(--c-muted)", fontSize: 12, textAlign: "center", padding: 40 }}>No deadlined tasks.</p>
-          )}
+          {deadlineTasks.length === 0 && <p style={{ color: "var(--c-muted)", fontSize: 12, textAlign: "center", padding: 40 }}>No upcoming deadlines.</p>}
           {deadlineTasks.map(t => {
             const dl = dlInfo(t.deadline);
             return (
@@ -702,13 +597,14 @@ export default function Dashboard() {
                 display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
                 borderRadius: 8, background: "var(--c-surface)", border: "1px solid var(--c-border)", marginBottom: 4,
               }}>
+                <button onClick={() => toggleFlag(t.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: flagged.has(t.id) ? "#F0A840" : "var(--c-muted)", opacity: flagged.has(t.id) ? 1 : 0.35, padding: 0, flexShrink: 0 }}>★</button>
                 <div style={{ width: 8, height: 8, borderRadius: 99, background: t.pColor, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
                   <div style={{ fontSize: 10, color: "var(--c-muted)" }}>{t.pName}</div>
                 </div>
-                <span style={{ fontSize: 10, fontWeight: 700, color: PRIORITY_COLORS[t.priority].text }}>{PRIORITY_COLORS[t.priority].label.toUpperCase()}</span>
-                <span style={{ fontSize: 11, fontWeight: 600, color: dl?.color, whiteSpace: "nowrap", minWidth: 50, textAlign: "right" }}>{t.deadline}</span>
+                {PRIORITY_COLORS[t.priority] && <span style={{ fontSize: 10, fontWeight: 700, color: PRIORITY_COLORS[t.priority].text }}>{PRIORITY_COLORS[t.priority].label.toUpperCase()}</span>}
+                <span style={{ fontSize: 11, fontWeight: 600, color: dl?.color, whiteSpace: "nowrap" }}>{t.deadline}</span>
                 {dl && <span style={{ fontSize: 10, fontWeight: 700, color: dl.color, whiteSpace: "nowrap" }}>{dl.label}</span>}
               </div>
             );
