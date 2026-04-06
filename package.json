@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "homepage": "https://talha215.github.io/project-dashboard",
+  "homepage": "https://talha215.github.io/ProjectTracker",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
